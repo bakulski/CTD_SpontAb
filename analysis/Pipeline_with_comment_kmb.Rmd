@@ -1,0 +1,1856 @@
+---
+title: "CTD Analytic Project"
+subtitle: "Evaluating chemical toxicants for association with spontaneous abortion using the Comparative Toxicogenomics Dataset (CTD)"
+output:
+  html_document:
+    theme: spacelab
+    highlight: tango
+    toc: true
+    number_sections: true
+    toc_depth: 5
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+- **Summer 2018**
+- **Name** Yuan Jin, Sean Harris, Kelly Bakulski
+
+CTD background and data curation process. (Need paragraph here) North Carolina State University. Part of ToxNet (NIH)
+
+# Statistical Basic
+When we try to compare proportions of a categorical outcome according to different independent groups, we can consider several statistical tests such as chi-squared test, Fisher's exact test, or z-test. The chi-squared test and Fisher's exact test can assess for independence between two variables when the comparing groups are independent and not correlated. The chi-squared test applies an approximation assuming the sample is large, while the Fisher's exact test runs an exact procedure especially for small-sized samples.
+
+Since the sample size is always larger than 1000 in this researh case, we mainly apply Chi-squared test on independency test, also add Fisher Exact test as comparison.
+
+## Chi-Squared independency test
+### Karl Pearson's chi squared test
+The chi-squared test is used to compare the distribution of a categorical variable in a sample or a group with the distribution in another one. If the distribution of the categorical variable is not much different over different groups, we can conclude the distribution of the categorical variable is not related to the variable of groups. Or we can say the categorical variable and groups are independent.
+
+The chi-squared test performs an independency test under following null and alternative hypotheses, H0 and H1, respectively.
+
+$H_0$: Independent (no association)
+
+$H_1$: Not independent (association)
+
+The test statistic of chi-squared test: $\chi^2=\sum(O-E)^2/E \sim \chi^2$ with degrees of freedom $(r-1)(c-1)$, Where $O$ and $E$ represent observed and expected frequency, and $r$ and $c$ is the number of rows and columns of the contingency table. The degrees of freedom is one as the data has two rows and two columns:$(r-1)(c-1) = (2-1)*(2-1) = 1$.
+
+When makig conclusion referring to the chi-squared distribution. We reject the null hypothesis of independence if the calculated chi-squared statistic is larger than the critical value from the chi-squared distribution. In the chi-squared distribution, the critical values are 3.84, with corresponding degrees of freedom of 1, at an alpha level of 0.5. Larger chi-square statistics than these critical values of specific corresponding degrees of freedom lead to the rejection of null hypothesis of independence. 
+The chi-squared test needs an adequate large sample size because it is based on an approximation approach. The result is relevant only when no more than 20% of cells with $E < 5$ and no cell have $E < 1$.
+
+### 'N-1' Chi-Squared independency test
+Since the chi squared test was first used as a statistical test of *two-by-two* tables, the standard procedure has been to compare the formula 
+$$(ad-bc)^2N/mnrs$$
+against the chi squared distribution with 1 degree of freedom.
+
+However, Campbell (2007) recommended what he called the "N-1" correction for chi-square tests performed on *two-by-two* contingency tables. 
+
+The alernative formula 
+$$(ad-bc)^2(N-1)/mnrs$$
+performs better in practice in that Type I errors are a better match to the nominal significance level $\alpha$. (The only difference in this formula from Karl Pearson's chi squared test is that $'N -1'$ replaces $'N'$). The theoretical arguments can be found in http://www.iancampbell.co.uk/twobytwo/n-1_theory.htm
+
+So in our chi-squared tests, we perform $N-1$ chi-squared test when at least 1 expected frenquency is less than 5. Also we removed those cases with expected frenquency less than 1.
+
+## Bonferroni Correction
+The Bonferroni correction is a multiple-comparison correction used when several dependent or independent statistical tests are being performed simultaneously (since while a given alpha value $\alpha$ may be appropriate for each individual comparison, it is not for the set of all comparisons). In order to avoid a lot of spurious positives, the alpha value needs to be lowered to account for the number of comparisons being performed.
+
+The simplest and most conservative approach is the Bonferroni correction, which sets the alpha value $\alpha$ for the entire set of $n$ comparisons equal to $\alpha$ by taking the alpha value for *each comparison* equal to $\alpha /n$. Explicitly, given $n$ tests $T_i$ for hypotheses $H_i (1\leq i\leq n)$ under the assumption $H_0$ that all hypotheses $H_i$ are false, and if *the individual test critical values* are $\le \alpha/n$, then *the experiment-wide critical value* is $\le \alpha$. In equation form, if
+$$P(T_i \  passes | H_0) \leq \alpha /n$$
+for $1\leq i \leq n$, then 
+$$P(T \  passes |H_0) \leq \alpha$$
+which follows from the Bonferroni inequalities.
+
+```{r, eval=FALSE, echo=FALSE}
+install.packages("workflowr")
+install.packages("plotly")
+install.packages("miscTools")
+install.packages("gplots")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("LBE")
+install.packages("PhViD")
+install.packages("cowplot")
+install.packages("ggpubr")
+install.packages("knitr")
+install.packages("kableExtra")
+install.packages("readxl")
+install.packages("gridExtra")
+install.packages("forestplot")
+install.packages("varhandle")
+install.packages("VennDiagram")
+```
+
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(2018)
+library(plotly)
+library(cowplot)
+library(miscTools)
+library(reshape2)
+library(dplyr)
+library(plyr)
+library(ggpubr)
+require(knitr)
+library(grid)
+library(gtable)
+library(gplots)
+library(kableExtra)
+library(readxl)
+library(PhViD)
+library(grid)
+library(gridExtra) 
+library(forestplot)
+library(varhandle)
+library(VennDiagram)
+library(RColorBrewer)
+'%ni%' <- Negate('%in%')
+options(scipen=999)
+```
+
+# Import Data
+```{r  test, echo=TRUE, message=FALSE, warning=FALSE}
+setwd("~/Google Drive/Placenta/CTD_placenta/Results/Datasets")
+test<-read.csv("SA_Genes_function_edited.csv")
+```
+
+## Genome data
+```{r sagenes, echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE}
+location<-"~/Google Drive/Placenta/CTD_placenta/Results/Datasets/"
+heat <- read.csv(paste0(location,"SA_Genes_function_edited.csv"), header=T, stringsAsFactors=F) %>%
+        .[,-c(2,3,4)]
+
+files <- paste0(location,c("Human", "Mouse", "Rat"), "_new.csv")
+Genes <- lapply(lapply(files, function(x) read.csv(x, header=T, stringsAsFactors=F)), 
+                              function(y) y <- y[,2:3])
+
+# name list
+names(Genes) <- c("Hum", "Mus", "Rat")
+
+# inspect genes number for each chemical 
+for (i in 1:length(Genes))  print(paste(names(Genes)[i], "has", nrow(Genes[[i]]), "genes"))
+```
+
+## chemical-gene data
+```{r chemgenes, echo=TRUE, message=FALSE, warning=FALSE}
+#setwd("~/Google Drive/Placenta/CTD_placenta/Results/Datasets/Chem_gene")
+location2<-"~/Google Drive/Placenta/CTD_placenta/Results/Datasets/Chem_gene/"
+# classification
+chem_classification <-
+        read.delim(paste0(location2,"chemical_classification.txt"), header=T, stringsAsFactors=F) %>% 
+        .$Chemical %>% paste0(., ".txt") %>% .[which(. %in% list.files(location2))]
+
+C_G  <- lapply(chem_classification, function(x) read.delim(paste0(location2,x), sep=",", header=T, stringsAsFactors=F))
+
+# name list
+chem_classification <- gsub("\\..*","", chem_classification)
+names(C_G) <- chem_classification
+
+# inspect genes number for each chemical 
+for (i in 1:length(C_G))  print(paste(names(C_G)[i], "is associated with", nrow(C_G[[i]]), "genes"))
+```
+
+## Disease-gene data
+```{r echo=TRUE, message=FALSE, warning=FALSE, eval=TRUE}
+#setwd("~/Google Drive/Placenta/CTD_placenta/Results/Datasets/Dis_gene")
+location3<-"~/Google Drive/Placenta/CTD_placenta/Results/Datasets/Dis_gene/"
+DG_f <- list.files(location3)
+D_G  <- lapply(lapply(DG_f, function(x) read.csv(paste0(location3,x), header=T, stringsAsFactors=F)),
+                            function(y) y <- y[, c(1,4)])
+
+D_G <- lapply(D_G, setNames, colnames(C_G[[1]])[5:6])
+
+# name list
+DG_f <- gsub("_.*","", DG_f)
+names(D_G) <- DG_f
+
+# inspect genes number for each organism
+for (i in 1:length(D_G))  print(paste("Spontaneous Abortion in", names(D_G)[i], 
+                                      "is associated with", nrow(D_G[[i]]), 
+                                      "genes"))
+```
+
+## Spontaneous Abortion Data
+```{r Genes.Dis, message=FALSE}
+#setwd("~/Google Drive/Placenta/CTD_placenta/Results/Datasets/")
+location<-"~/Google Drive/Placenta/CTD_placenta/Results/Datasets/"
+Genes.Dis = read.csv(paste0(location,"CTD_genes_diseases.csv"), skip=26, header=T, stringsAsFactors=F)
+```
+
+
+## Checking Chemical-Gene list 
+
+Overlap Chemical-Gene list with NEW genome data of Human, Mouse and Rat
+
+### Human
+```{r human}
+# Check how many genes in chemical-gene list are NOT in genome list
+lapply(C_G, function(x) summary(x[x$Organism == "Homo sapiens",]$GeneSymbol %in% Genes$Hum$Symbol))
+        
+C_G <- lapply(C_G, function(x) {
+                   
+                   # pick out genes which are NOT in genome list
+                   noin <- x[x$Organism =="Homo sapiens",][
+                           x[x$Organism =="Homo sapiens",]$GeneSymbol %ni% Genes$Hum$Symbol,]
+                   
+                   # Delete genes which are NOT in genome list
+                   x <- x[which(rownames(x) %ni% row.names(noin)), ]
+})               
+
+# Check again             
+lapply(C_G, function(x) summary(x[x$Organism == "Homo sapiens",]$GeneSymbol %in% Genes$Hum$Symbol))
+```
+
+###  Mouse
+
+```{r mouse}
+# Check how many genes in chemical-gene list are NOT in genome list
+lapply(C_G, function(x) 
+            summary(x[x$Organism == "Mus musculus",]$GeneSymbol %in% toupper(Genes$Mus$Symbol)))
+        
+C_G <- lapply(C_G, function(x) {
+                   
+                   # pick out genes which are NOT in genome list
+                   noin <- x[x$Organism =="Mus musculus",][
+                           x[x$Organism =="Mus musculus",]$GeneSymbol %ni% toupper(Genes$Mus$Symbol),]
+                   
+                   # Delete genes which are NOT in genome list
+                   x <- x[which(rownames(x) %ni% row.names(noin)), ]
+})               
+
+# Check again             
+lapply(C_G, function(x) 
+            summary(x[x$Organism == "Mus musculus",]$GeneSymbol %in% toupper(Genes$Mus$Symbol)))
+```
+
+### Rat
+
+```{r rat}
+# Check how many genes in chemical-gene list are NOT in genome list
+lapply(C_G, function(x) 
+            summary(x[x$Organism == "Rattus norvegicus",]$GeneSymbol %in% toupper(Genes$Rat$Symbol)))
+        
+C_G <- lapply(C_G, function(x) {
+                   
+                   # pick out genes which are NOT in genome list
+                   noin <- x[x$Organism =="Rattus norvegicus",][
+                           x[x$Organism =="Rattus norvegicus",]$GeneSymbol %ni% toupper(Genes$Rat$Symbol),]
+                   
+                   # Delete genes which are NOT in genome list
+                   x <- x[which(rownames(x) %ni% row.names(noin)), ]
+})               
+
+# Check again             
+lapply(C_G, function(x) 
+            summary(x[x$Organism == "Rattus norvegicus",]$GeneSymbol %in% toupper(Genes$Rat$Symbol)))
+```
+
+## Checking Disease-Gene list 
+
+Overlap Disease-Gene data with NEW genome data of Human, Mouse and Rat
+
+### Human
+
+```{r humangenemiss}
+# Check how many genes in chemical-gene list are NOT in genome list
+summary(D_G$Hum$GeneSymbol %in% Genes$Hum$Symbol)
+```
+
+### Mouse
+
+```{r mousegenemiss}
+# Check how many genes in chemical-gene list are NOT in genome list
+summary(D_G$Mus$GeneSymbol %in% toupper(Genes$Mus$Symbol))
+
+# pick out genes which are NOT in genome list
+noin <- D_G$Mus[D_G$Mus$GeneSymbol %ni% toupper(Genes$Mus$Symbol),]
+# Delete genes which are NOT in genome list
+D_G$Mus <- D_G$Mus[which(rownames(D_G$Mus) %ni% row.names(noin)), ]
+           
+# Check again             
+summary(D_G$Mus$GeneSymbol %in% toupper(Genes$Mus$Symbol))
+```
+
+### Rat
+
+```{r ratgenemiss}
+# Check how many genes in chemical-gene list are NOT in genome list
+summary(D_G$Rat$GeneSymbol %in% toupper(Genes$Rat$Symbol))
+
+# pick out genes which are NOT in genome list
+noin <- D_G$Rat[D_G$Rat$GeneSymbol %ni% toupper(Genes$Rat$Symbol),]
+# Delete genes which are NOT in genome list
+D_G$Rat <- D_G$Rat[which(rownames(D_G$Rat) %ni% row.names(noin)), ]
+           
+# Check again             
+summary(D_G$Rat$GeneSymbol %in% toupper(Genes$Rat$Symbol))
+```
+
+# Exploring data
+
+## Chemical-Gene
+
+### Explore genes' number associated with different Species for each chemical 
+
+```{r orgperchem}
+# ***No. of organisms related with chemicals***
+# Calculation function
+org_num <- function(x, Data){
+        num <- 0
+        ary <- array(0, dim=c(length(x),1))
+        for(i in 1:length(x)){
+                num <- nrow(Data[Data$Organism == x[i],])
+                ary[i,1] <- num
+        }
+        return(ary)
+}
+
+# get No. of genes associated with different organisms for each chemical
+org_gene <- lapply(lapply(names(C_G), function(x) {
+        
+                                # org No. of each chemical
+                                org <- C_G[[x]][!duplicated(C_G[[x]]$Organism), 7]
+                                organ.num <- length(org)
+                                print(paste("No. of Organisms in", x, "is", organ.num))
+                                
+                                # get genes No. by calculation function above
+                                num <- org_num(org, C_G[[x]])
+                                org_gene <- cbind.data.frame(org, num, stringsAsFactors=FALSE)
+                                
+                    # set colnames
+                    }), setNames, c("Org", "Gene"))
+
+names(org_gene) <- names(C_G)
+```
+
+#### PIE plots
+
+```{r pie, fig.width=10, fig.height=17, fig.align='center',out.extra='angle=90',echo=FALSE}
+plot_org <- lapply(lapply(names(C_G), function(x) {
+        
+                                # org No. of each chemical
+                                org <- C_G[[x]][!duplicated(C_G[[x]]$Organism), 7]
+                                organ.num <- length(org)
+                                
+                                # get genes No. by calculation function above
+                                num <- org_num(org, C_G[[x]])
+                                org_gene <- cbind.data.frame(org, num, stringsAsFactors=FALSE)
+                                org_gene <- org_gene[which(org_gene[,1] %in% 
+                                            c("Homo sapiens", "Mus musculus", "Rattus norvegicus")),]
+                                
+                    # set colnames
+                    }), setNames, c("Org", "Gene"))
+
+#Benzophenon-3 has no Mouse genes
+plot_org[[14]] <- rbind.data.frame(plot_org[[14]],
+                                   data.frame("Org"="Mus musculus",
+                                              "Gene"=0))
+
+names(plot_org) <- names(C_G)
+# order rows by name
+plot_org <- lapply(plot_org, function(x) {x[with(x, order(Org)),]})
+
+
+# pie plots
+plot<-list()
+plot<-
+lapply(names(plot_org), function(p) 
+        ggplot(plot_org[[p]], aes(x = factor(1), y = Gene, fill = Org)) +
+                              geom_bar(width = 1, stat = "identity") +
+                              coord_polar(theta = "y") +
+               scale_fill_grey() +
+                              theme(axis.text = element_blank(),
+                                    axis.ticks = element_blank(),
+                                    panel.grid  = element_blank()) +
+                              labs(x="", y="", title=p)
+)
+# arrange plots function (use legend of first plot in list)
+grid_arrange_shared_legend <- function(x) {
+
+        plot <- x
+        g <- ggplotGrob(plot[[1]] + theme(legend.position="bottom"))$grobs
+        legend <- g[[which(sapply(g, function(x) x$name) == "guide-box")]]
+        lheight <- sum(legend$height)
+        grid.arrange(
+                do.call(arrangeGrob, lapply(plot, function(x)
+                        x + 
+                        # theme(legend.position="none",
+                        # axis.text = element_blank(),
+                        # axis.ticks = element_blank(),
+                        # panel.grid  = element_blank(),
+                        # plot.title = element_text(size = 10, 
+                        #                           face = "bold",
+                        #                           hjust = 0.5))
+                        theme_bw() +
+                        theme(axis.ticks=element_blank(),
+                              axis.text.y=element_blank(),
+                              axis.text.x=element_blank(),
+                              axis.title=element_blank(),
+                              legend.position="none",
+                              panel.grid.major=element_blank(),
+                              panel.grid.minor=element_blank(),
+                              panel.border=element_blank(),
+                              plot.title = element_text(size = 10, 
+                                                  face = "bold",
+                                                  hjust = 0.5))
+                        )),
+                legend, ncol = 1,
+                heights = unit.c(unit(1.01, "npc") - lheight, lheight))
+}
+
+grid_arrange_shared_legend(plot)
+```
+
+### Table-0 Gene Entries of 165 Species for chemicals
+
+Merge all lists by Organisms
+```{r mergeorg, echo=TRUE, message=FALSE, warning=FALSE}
+# Merge all lists by Organisms
+l <- lapply(org_gene, "[", c("Org", "Gene"))
+
+mymerge <- function(x) {
+        
+        for(i in 2:length(l)) x <- merge(x, l[[i]], all=T, by="Org")
+        colnames(x) <- c("Organism", names(l))
+        return(x)
+}
+
+cgtable <- mymerge(l[[1]])
+```
+
+Get Total No. and unique No. of genes for each chemical
+```{r countchemgene}
+# Total No. and unique No. of genes for each chemical
+chem.total.1 = do.call(cbind, lapply(C_G, nrow))
+chem.total.2 = do.call(cbind, lapply(C_G, function(x) length(unique(x$GeneId))))
+
+chem.total   = rbind.data.frame(chem.total.1, chem.total.2); 
+rownames(chem.total) <- c("All gene entries", "All unique gene symbols")
+```
+
+Final summary table
+```{r summary, echo=TRUE, message=FALSE, warning=FALSE}
+rownames(cgtable) <- cgtable[,1]
+rownames(cgtable)[1] = "Null" 
+
+cgtable <- cgtable[,-1]
+colnames(cgtable) = colnames(chem.total)
+cgtable <- rbind(chem.total, cgtable)
+        
+kable(cgtable, 
+      caption = "Gene Entries of 165 Species for chemicals") %>%
+      kable_styling(full_width = F)
+```
+
+### Table-1 Gene Entries of human, rat, mouse for 24 chemicals
+
+Check Unique genes for each chemical
+```{r uniquechemgene}
+# Check Unique (Human)
+uniq.human <- 
+        do.call(rbind, 
+        lapply(C_G, function(x) length(unique(x[x$Organism == "Homo sapiens",]$GeneId))))
+
+# Check Unique (Rat)
+uniq.rat <- 
+        do.call(rbind, 
+        lapply(C_G, function(x) length(unique(x[x$Organism == "Rattus norvegicus",]$GeneId))))
+
+# Check Unique (mouse)
+uniq.mus <- 
+        do.call(rbind, 
+        lapply(C_G, function(x) length(unique(x[x$Organism == "Mus musculus",]$GeneId))))
+```
+
+
+```{r summarygene, echo=TRUE, message=FALSE}
+Table <- cbind(t(cgtable[c("All gene entries",
+                           "All unique gene symbols",
+                           "Homo sapiens",
+                           "Mus musculus",
+                           "Rattus norvegicus"),]), 
+                uniq.human, uniq.mus, uniq.rat)
+
+colnames(Table) <- c("All gene entries", "All unique gene symbols", 
+                     "Gene entries linked to human", 
+                     "Gene entries linked to mouse",
+                     "Gene entries linked to rat", 
+                     "Unique Gene entries linked to human",
+                     "Unique Gene entries linked to mouse",
+                     "Unique Gene entries linked to rat")
+
+Table <- Table[, c("All gene entries", "All unique gene symbols", 
+                   "Gene entries linked to human", 
+                   "Unique Gene entries linked to human",
+                   "Gene entries linked to mouse", 
+                   "Unique Gene entries linked to mouse",
+                   "Gene entries linked to rat",   
+                   "Unique Gene entries linked to rat")]
+
+kable(Table,
+      caption = "Gene Entries of 3 Species for 24 Chemicals")%>%
+      kable_styling(full_width = F)%>%
+        group_rows("Metal", 1, 4) %>%
+        group_rows("Phthalate", 5, 7)%>%
+        group_rows("VOC (volatile organic carbon)", 8,12)%>%
+        group_rows("Phenol", 13, 14)%>%
+        group_rows("Pesticide", 15, 20)%>%
+        group_rows("PAH (polycyclic aromatic hydrocarbon)",21,23)%>%
+        group_rows("PCP (personal care product)", 24,24)
+```
+
+
+## Spontaneous Abortion-Gene
+
+No. of chemicals linked to Spontaneous Abortion
+
+```{r sagene}
+# No. of chemicals linked to Spontaneous Abortion
+SpontAbort.chem <- Genes.Dis[Genes.Dis$DiseaseName == "Abortion, Spontaneous",]
+SpontAbort.c    <- SpontAbort.chem[!duplicated(SpontAbort.chem$InferenceChemicalName), 6]
+SpontAbort.chem.num <- length(SpontAbort.c); SpontAbort.chem.num
+```
+
+Calculate Number of genes for each chemical
+```{r numgenechem}
+
+# Calculate Number of genes for each chemical
+chem.num <- function(x, Data){
+        num <- 0
+        ary <- array(0, dim=c(length(x),1))
+        for(i in 1:length(x)){
+                num <- nrow(Data[Data$InferenceChemicalName == x[i],])
+                ary[i,1] <- num
+        }
+        return(ary)
+}
+
+# Calculate num. of genes for each organism associated w/ Spontaneous Abortion
+SA.CHEM.num  <- chem.num(SpontAbort.c, SpontAbort.chem)
+SpontAbort_chem <- cbind.data.frame(SpontAbort.c, SA.CHEM.num); 
+colnames(SpontAbort_chem) = c("Chemicals","No._of_Genes")
+
+# Final Table (Add total number of gene-chemical associations)
+SpontAbort.chem.table <- as.data.frame(insertRow(as.matrix(SpontAbort_chem),1,
+                                                 c("Total No. of Genes",
+                                                   nrow(SpontAbort.chem))));
+SpontAbort.chem.table
+
+```
+
+Pie plot
+```{r pieplot}
+# Chemical-gene Pie plot for Spont. Abortion
+SpontAbort_chem$freq <- round(SpontAbort_chem$No._of_Genes / sum(SpontAbort_chem$No._of_Genes), digits=3)
+
+p <- plot_ly(SpontAbort_chem, labels = ~Chemicals, values = ~freq, type = 'pie',
+             textposition = 'inside',textinfo = 'label+percent') %>%
+        layout(title = 'Genes perc for each Chemical',
+               xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+               yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+p
+```
+
+
+# 2x2 Tables (Human)
+
+Total No. Genes
+```{r totgene}
+N <- nrow(Genes$Hum); N
+```
+
+Number in tables
+```{r nograpes1, results="asis"}
+# Get all related human genes for each chemical
+CGH <- lapply(C_G, function(x) x[x$Organism == "Homo sapiens", 5:6][!duplicated(
+                               x[x$Organism == "Homo sapiens", 5:6]$GeneId),]) 
+
+# No. of Genes associated with both Chemicals and S.A.
+a <- sapply(CGH, function(x) sum(x$GeneSymbol %in% D_G$Hum$GeneSymbol)); a<-as.matrix(a, ncol=1)
+
+# Unique No. of huamn genes for each chemical
+N0_ <- uniq.human
+
+# No. of human genes associated w/ S.A.
+N_0 <- nrow(D_G$Hum)
+
+b = N0_ - a;
+c = N_0 - a;
+d = N-a-b-c;
+N1_ = N - N0_; 
+N_1 = N - N_0;
+
+Hum_t <- list()
+for (i in 1:length(C_G)) {
+        
+        Hum_t[[i]] <- matrix(c(a[i], b[i], N0_[i], 
+                               c[i], d[i], N1_[i], 
+                               N_0,  N_1,  N), ncol=3, byrow=T)
+        
+        rownames(Hum_t[[i]]) <- c("Yes","No","Total")
+        colnames(Hum_t[[i]]) <- c("Yes","No","Total")
+        
+        Hum_t[[i]] <- as.data.frame(Hum_t[[i]])
+}
+        
+names(Hum_t) <- names(C_G)
+lapply(names(Hum_t), function(x) {
+                   kable(Hum_t[[x]],
+                   caption = paste0(x, "-Gene-S.A.")) %>%  
+                   kable_styling(full_width = F)
+                })
+```
+
+Venn Plots
+```{r venn, fig.width=4, fig.height=4, fig.align='center',out.extra='angle=90', echo=FALSE}
+for (i in seq_along(Hum_t)) {
+        
+        grid.newpage()
+        draw.pairwise.venn(area1=Hum_t[[i]][1,3], area2=Hum_t[[i]][3,1],
+                           cross.area=Hum_t[[i]][1,1], alpha=rep(.5,2),
+                           ext.text=F,cex=c(1.8,1.4,1.8),cat.cex=rep(1.3,2),
+                           cat.pos = rep( ifelse( abs(Hum_t[[i]][1,3]-
+                                                  Hum_t[[i]][3,1]) <
+                                                  500, 165, 330), 2), 
+                           cat.dist=rep(0.025,2),rotation.degree = 50,
+                           cat.col = c("dodgerblue3","firebrick4"),
+                           category=c(names(Hum_t)[i], "Spontaneous abortion"),
+                           lty=rep("blank",2), fill=c("light blue", "pink"), 
+                           label.col=c("dodgerblue3", "black", "firebrick4"))
+}
+```
+
+# Tests and Results (Human)
+
+## Chi-Squared Test
+
+To determine whether the Chemical and Spontaneous Abortion are independent, we compare each p-value to the significance level. Usually, a significance level (denoted as $\alpha$) of 0.05 works well for two-sided test. But here we conducted multiple analyses on the same dependent/independent variable (Spontaneous Abortion), the chance of committing a Type I error increases, thus increasing the likelihood of 
+rejecting $H_0$. To correct for this, or protect from Type I error, a Bonferroni correction is conducted.
+
+```{r chisq, warning=FALSE}
+# see whether chi-squared distribution can be satisfied for each chemical
+try_chisq <- try(lapply(Hum_t, function(x) chisq.test(x[1:2,1:2], correct=F)))
+
+chi_hum <- sapply(try_chisq, function(y) {
+        
+        # when there're low expected cell count, using 'N-1' chi-square
+        if (y$expected[1,1]>=1 & y$expected[1,2]>=1 & y$expected[2,1]>=1 & y$expected[2,2]>=1) {
+                if (y$expected[1,1]<5|y$expected[1,2]<5|y$expected[2,1]<5|y$expected[2,2]<5) {
+                        chisq <- (y$statistic)*N/(N-1)
+                        newp  <- pchisq(chisq, df=1, lower.tail=F)
+                        cell_count <- "< 5"
+                }
+                else  {
+                        chisq <- y$statistic
+                        newp  <- y$p.value
+                        cell_count <- round(y$expected[1,1], 2)
+                }
+        }
+        else {
+                chisq <- NA
+                newp  <- NA
+                cell_count <- "< 1"
+        }
+        
+        return(c(chisq_hum=chisq, newp_hum=newp, cell_count_hum=cell_count))
+})
+chi_hum <- as.data.frame(chi_hum)
+Chi_Squared_Stat <- chi_hum["chisq_hum.X-squared",] %>% unfactor %>% t %>% as.data.frame
+Chi_Squared_p_value <- chi_hum["newp_hum.X-squared",] %>% unfactor %>% t %>% as.data.frame
+```
+
+## Fisher's Enrichment Test
+
+```{r fisher}
+# Fisher test
+fisher <- lapply(Hum_t, function(x) fisher.test(x[1:2,1:2]))
+
+# Extract fisher OR's
+Fisher_Odds_Ratio <- do.call(rbind.data.frame, lapply(fisher, function(x) x$estimate))
+
+# Extract fisher p-values
+Fisher_p_value  <- do.call(rbind.data.frame, lapply(fisher, function(x) x$p.value))
+
+# Extract fisher CI
+Fisher_lower <- do.call(rbind.data.frame, lapply(fisher, function(x) x$conf.int[1]))
+Fisher_upper <- do.call(rbind.data.frame, lapply(fisher, function(x) x$conf.int[2]))
+```
+
+
+## PRR
+```{r prr}
+# PRR matrix, containing PRR values, lower bounds and upper bounds
+PRR <- as.data.frame(sapply(Hum_t, function(x) {
+                                PRR <- (x[1,1]/x[1,3])/(x[2,1]/x[2,3])
+                                s <- sqrt(1/x[1,1] + 1/x[2,1] - 
+                                          1/(x[1,1]+x[1,2])   - 
+                                          1/(x[2,1]+x[2,2]))
+                                prr.low <- PRR/exp(1.96*s)
+                                prr.up  <- PRR*exp(1.96*s)
+                
+                                PRR <- rbind(PRR, s, prr.low, prr.up)
+}))
+
+# extract PRR values
+prr <- t(PRR[1,])
+```
+
+## Statistical Tests results for each chemical by spontaneous abortion in humans
+```{r chemstat, echo=FALSE, message=FALSE}
+Table_hum <- cbind.data.frame(Chi_Squared_Stat, Chi_Squared_p_value, 
+                            Fisher_Odds_Ratio, Fisher_p_value, prr) %>% na.omit
+
+colnames(Table_hum) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                       "Fisher_Odds_Ratio", "Fisher_p_value", "PRR")
+
+# Bonferroni correction
+Table_hum$Chi_Squared_p_value <-p.adjust(Table_hum$Chi_Squared_p_value, method="bonferroni")
+Table_hum$Fisher_p_value <-p.adjust(Table_hum$Fisher_p_value, method="bonferroni")
+
+sum_hum <- cbind.data.frame(Chi_Squared_Stat, Chi_Squared_p_value, 
+                            Fisher_Odds_Ratio, Fisher_p_value, prr) 
+sum_hum[which(rownames(sum_hum) %in% rownames(Table_hum)), ] = Table_hum
+sum_hum <- cbind.data.frame(sum_hum[,-5], Fisher_lower, Fisher_upper, t(PRR))
+sum_hum[apply(is.na(sum_hum), 1, any),] <- NA
+
+colnames(sum_hum) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                       "Fisher_Odds_Ratio", "Fisher_p_value", 
+                       "Fisher_CI_lower", "Fisher_CI_upper", 
+                       "PRR", "sqrt", "PRR_CI_lower", "PRR_CI_upper")
+
+for (i in 1:nrow(Table_hum)) {
+        for (j in 1:ncol(Table_hum)) {
+               if (Table_hum[i,j]< 0.0005/nrow(Table_hum)) Table_hum[i,j] <- "< 0.000"
+               else Table_hum[i,j] <- round(as.numeric(Table_hum[i,j]), 4) 
+        }
+}
+
+kable(Table_hum,
+      caption=paste("Statistical Tests for each chemical by 
+                     Spontaneous Abortion in humans 
+                     ( CUT-OFF =", round(0.05/nrow(Table_hum), 4),
+                    ")")) %>% 
+      kable_styling(full_width = F)
+```
+
+In these results, all p-values are less than 0.05/5. So, we reject the null hypothesis, i.e. there are significant associations between Cadmium and Spontaneous Abortion (S.A.), Arsenic and S.A., Lead and S.A, Atrazine and S.A., also for Ethyl parathion and S.A.
+
+Although Fisher's Exact Test is recommended when sample size is less than 1000, it's been widely accepted by researchers. So we'd better include this test to double-check our Chi-Squared test results. 
+
+## Cross Validation
+```{r crossval, echo=FALSE,results='hide',fig.keep='all',message=FALSE}
+cv_int  <- list(); cv_gene <- list(); cv_rac  <- list()
+chisq_test <- array(); fisher_test <- array()
+# No. of random samples
+cut_offs <- c(100, 500, 1000, 2500, 5000, 10000)
+# set color
+cols  <- colorRampPalette(brewer.pal(12, "Set3"), alpha=TRUE)(length(cut_offs))
+
+lapply(cut_offs, function(N0_) {
+        
+        for (i in 1:1000) {
+                
+                # random sample
+                cv_int[[i]]  <- sample.int(N, N0_)              
+                cv_gene[[i]] <- Genes$Hum[cv_int[[i]],]      
+                # find intersections between random sample and Disease-Gene list of human
+                cv_rac[[i]]  <- cv_gene[[i]][which(cv_gene[[i]]$GeneID %in% D_G$Hum$GeneId),] 
+        
+                a = nrow(cv_rac[[i]])
+                b = N0_ - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - N0_; 
+                N_1 = N - N_0;
+        
+                Table <- matrix(c(a,b,N0_,c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                Table <- as.data.frame.matrix(Table)
+                
+                if (N0_ <= 1000) {
+                        chisq_res <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test[i] <- chisq_res$p.value
+                } else {
+                        chisq_res <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test[i] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test[i] <- fisher_res$p.value
+                
+        }
+
+        hist(chisq_test, las=1, col="dodgerblue", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Chi-squared p-values for association",
+             main=as.character(paste0("Chisq, Sample size = ", N0_)))
+        
+         hist(fisher_test, las=1, col="darkorange", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Fisher's test p-values for association",
+             main=as.character(paste0("Fisher, Sample size = ", N0_)))
+})
+```
+
+
+### Summary plot of cross validation
+```{r plotcrossval, fig.width=8, fig.height=6, fig.align='center',out.extra='angle=90', echo=FALSE}
+chisq_test_hum = fisher_test_hum <- data.frame(matrix(NA, nrow=1000, ncol=length(cut_offs)))
+colnames(chisq_test_hum) = colnames(fisher_test_hum) <- paste("sample size =", cut_offs)
+
+for(k in 1:length(cut_offs)) {
+    for (i in 1:1000) {
+                
+                # random sample
+                cv_int  <- sample.int(N, cut_offs[k])              
+                cv_gene <- Genes$Hum[cv_int,]      
+                # find interactions between random sample and Disease-Gene list of Mouse
+                cv_rac  <- cv_gene[which(toupper(cv_gene$Symbol) %in% D_G$Hum$GeneSymbol),] 
+                
+                a = nrow(cv_rac)
+                b = cut_offs[k] - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - cut_offs[k]; 
+                N_1 = N - N_0;
+                
+                Table <- matrix(c(a,b,cut_offs[k],c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                Table <- as.data.frame.matrix(Table)
+                
+                if (cut_offs[k] <= 1000) {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test_hum[i,k] <- chisq_res$p.value
+                } else {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test_hum[i,k] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test_hum[i,k] <- fisher_res$p.value
+                
+    }
+}
+
+cl <- rainbow(6)
+
+plot(density(chisq_test_hum[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Chi-squared p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6){ lines(density(chisq_test_hum[,i]), lwd=1, col = cl[i], type = 'b') }
+abline(v = 0.05/nrow(Table_hum), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_hum), 3)), col="black") 
+legend("topleft", legend=colnames(chisq_test_hum), fill=cl[1:6], cex=0.75)
+
+plot(density(fisher_test_hum[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Fisher Exact Test p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6) {lines(density(fisher_test_hum[,i]), lwd=1, col = cl[i], type = 'b')}
+abline(v = 0.05/nrow(Table_hum), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_hum), 3)), col="black") 
+legend("topleft", legend=colnames(fisher_test_hum), fill=cl[1:6], cex=0.75)
+
+# use lines instead of dots and increase the density smoothing with "adjust"
+plot(density(chisq_test_hum[,1], adjust=3), lwd=3, col=cl[1], type = 'l',
+     xlab="p-value for association", 
+     ylab="Density", main="Chi-squared p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6){ lines(density(chisq_test_hum[,i], adjust=3), lwd=3, col = cl[i], type = 'l') }
+abline(v = 0.05/nrow(Table_hum), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_hum), 3)), col="black") 
+legend("topleft", legend=colnames(chisq_test_hum), fill=cl[1:6], cex=0.75)
+
+plot(density(fisher_test_hum[,1], adjust=3), lwd=3, col=cl[1], type = 'l',
+     xlab="p-value for association", 
+     ylab="Density", main="Fisher Exact Test p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6) {lines(density(fisher_test_hum[,i], adjust=3), lwd=3, col = cl[i], type = 'l')}
+abline(v = 0.05/nrow(Table_hum), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_hum), 3)), col="black") 
+legend("topleft", legend=colnames(fisher_test_hum), fill=cl[1:6], cex=0.75)
+
+```   
+
+To prove the chemicals we selected by chi-squared test possessing significant association with S.A., we perform cross validation to show the p-value distribution of randomly selected genes. Here, we sample 100, 500, 1000, 2500, 5000, 10000 genes out of 42830 Human genes, and perform 1000 independent tests for each sample size. 
+
+From the summary p-value distribution plots, we can see that the distribution becomes smoother as the sample size increasing. Most ($\geq 95%$) tests show there's no significant association between randomly selected genes and S.A. genes. Therefore, we conclude that the independency $\chi^2$ tests for human are effective and meaningful.
+
+## Human Heat Map
+
+### Human Gene-Biological functions Heat Map table
+```{r heathuman, echo=TRUE, message=FALSE, warning=FALSE, fig.height=11, fig.width = 9,fig.align="center"}
+Genes_heat=heat$Gene.symbol 
+bio_func=colnames(heat)
+heat_1 <- ifelse(heat[,2]=="X", 2, 1)
+heat_2 <- ifelse(heat[,3]=="X", 3, 1)
+heat_3 <- ifelse(heat[,4]=="X", 4, 1)
+heat <- cbind.data.frame(Genes_heat,heat_1,heat_2,heat_3)
+heat <- heat[order(heat[,2], heat[,3], heat[,4], decreasing=TRUE),]
+colnames(heat)[2:4] <- bio_func[2:4]
+heat
+# plot
+# longtable_1 <- melt(heat, 
+#                     id.var="Genes_heat",
+#                     measure.vars=colnames(heat[,-1]))
+# colnames(longtable_1)[2]="Biological Functions"
+# longtable_2 <- transform(longtable_1, Genes_heat=factor(Genes_heat, levels=unique(Genes_heat)))
+# #longtable_2 <- transform(longtable_1, value=factor(value, levels=unique(value)))
+
+# cols <- c("orange1","gray72","aquamarine2","dodgerblue2")
+# ggplot(longtable_2, 
+#        aes(Biological.Functions, Genes_heat, fill=factor(value))) + 
+#         scale_fill_manual(values=cols) + 
+#         geom_tile(color = "white") +
+#         labs(fill="Inflammation Immune system processes = 2 
+#              \nEmbryo anatomical development = 3 
+#              \nHormone regulation = 4 
+#              \nNo=1", 
+#              title="Gene-Biological Function Heat Map",
+#              x="Biological Functions", y="Spontaneous Abortion Genes in Human")+
+#         theme(axis.text.y = element_text(angle = 0, hjust = 1, vjust= 1, size = 3.5),
+#               axis.text.x = element_text(angle =10, hjust=.65, vjust=.8, size = 10))
+```
+
+### Gene-Chemical Heat Map
+```{r genechemmap, echo=TRUE, message=FALSE, warning=FALSE, fig.height = 8, fig.width = 10,fig.align="center"}
+# take union of the variables
+m = heat$Genes_heat
+b <- sapply(names(C_G), function(x) ifelse(m %in% C_G[[x]][C_G[[x]]$Organism == "Homo sapiens",]$GeneSymbol, "YES", "NO"))
+b = dg_count_hum<- cbind.data.frame('Gene'=m, b, stringsAsFactors=F)
+for (i in 1:nrow(dg_count_hum)) dg_count_hum$count[i] <- sum(dg_count_hum[i,]=="YES")
+# reshape into long-form to use in ggplot later
+longtable <- melt(b, 
+                  id.var="Gene",
+                  measure.vars = colnames(b[,-1]))
+colnames(longtable)[2]="Chemicals"
+# arrange the order for the final graph
+longtable2 <- transform(longtable, Gene= factor(Gene, levels = rev(m)))
+
+cols <- c("gray80", "firebrick3")
+ggplot(longtable2, 
+       aes(Chemicals, Gene, fill = factor(value) )) + 
+       scale_fill_manual(values = cols) + 
+       geom_tile(color = "white") +
+       labs(fill="Overlap")+
+       theme(axis.text.y = element_text(angle = 0,  hjust = 1, vjust = 1, size = 3),
+             axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9))
+```
+
+### Human genes connected with more than 1 chemicals
+```{r humangenmore, echo=TRUE, message=FALSE, warning=FALSE, fig.height = 5, fig.width = 8,fig.align="center"}
+dg_count_hum <- dg_count_hum[,c("Gene", "count")] %>% .[.[,2]!=0,]
+ggplot(dg_count_hum, aes(x=Gene, y=count))+ ylim(0,12) +
+        geom_bar(stat="identity", color="darkblue", fill="lightblue")+
+        labs(title="Important Genes in Mouse", y = "count")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=6.5))
+```
+
+
+# 2x2 Tables (Mouse)
+
+Total No. Genes
+```{r mousetotalgene}
+N <- nrow(Genes$Mus); N
+```
+
+Number in tables
+```{r nograpes2, results="asis"}
+
+# Get all related Mouse genes for each chemical
+CGM <- lapply(C_G, function(x) x[x$Organism == "Mus musculus", 5:6][!duplicated(
+                               x[x$Organism == "Mus musculus", 5:6]$GeneId),]) 
+
+# No. of Genes associated with both Chemicals and S.A.
+a <- sapply(CGM, function(x) sum(x$GeneSymbol %in% D_G$Mus$GeneSymbol)); a<-as.matrix(a, ncol=1)
+
+                # Unique No. of huamn genes for each chemical
+                N0_ <- uniq.mus
+
+                # No. of Mouse genes associated w/ S.A.
+                N_0 <- nrow(D_G$Mus)
+
+                b = N0_ - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - N0_; 
+                N_1 = N - N_0;
+
+                Mus_t <- list()
+                for (i in 1:length(C_G)) {
+        
+                        Mus_t[[i]] <- matrix(c(a[i], b[i], N0_[i], 
+                                               c[i], d[i], N1_[i], 
+                                               N_0,  N_1,  N), ncol=3, byrow=T)
+        
+                        colnames(Mus_t[[i]]) <- c("Yes","No","Total")
+                        rownames(Mus_t[[i]]) <- c("Yes","No","Total")
+        
+                        Mus_t[[i]] <- as.data.frame(Mus_t[[i]])
+}
+names(Mus_t) <- names(C_G)
+
+lapply(names(Mus_t), function(x) {
+                   kable(Mus_t[[x]],
+                   caption = paste0(x, "-Gene-S.A.")) %>%  
+                   kable_styling(full_width = F)})
+
+```
+
+Venn Plots
+```{r fig.width=4, fig.height=4, fig.align='center',out.extra='angle=90', echo=FALSE}
+
+for (i in seq_along(Mus_t)) {
+        
+        grid.newpage()
+        draw.pairwise.venn(area1=Mus_t[[i]][1,3], area2=Mus_t[[i]][3,1],
+                           cross.area=Mus_t[[i]][1,1], alpha=rep(.5,2),
+                           ext.text=F,cex=c(1.8,1.4,1.8),cat.cex=rep(1.3,2),
+                           cat.pos = rep( ifelse( abs(Mus_t[[i]][1,3]-
+                                                  Mus_t[[i]][3,1]) <
+                                                  500, 165, 330), 2), 
+                           cat.dist=rep(0.025,2),rotation.degree = 50,
+                           cat.col = c("dodgerblue3","firebrick4"),
+                           category=c(names(Mus_t)[i], "Spontaneous abortion"),
+                           lty=rep("blank",2), fill=c("light blue", "pink"), 
+                           label.col=c("dodgerblue3", "black", "firebrick4"))
+}
+
+```
+
+# Tests and Results (Mouse)
+
+## Chi-Squared Test
+
+```{r warning=FALSE}
+# see whether chi-squared distribution can be satisfied for each chemical
+try_chisq <- try(lapply(Mus_t, function(x) chisq.test(x[1:2,1:2], correct=F)))
+
+chi_mus <- sapply(try_chisq, function(y) {
+        
+        # when there're low expected cell count, using 'N-1' chi-square
+        if (y$expected[1,1]>=1 & y$expected[1,2]>=1 & y$expected[2,1]>=1 & y$expected[2,2]>=1) {
+                if (y$expected[1,1]<5|y$expected[1,2]<5|y$expected[2,1]<5|y$expected[2,2]<5) {
+                        chisq_mus <- (y$statistic)*N/(N-1)
+                        newp_mus  <- pchisq(chisq_mus, df=1, lower.tail=F)
+                        cell_count_mus <- "< 5"
+                }
+                else  {
+                        chisq_mus <- y$statistic
+                        newp_mus  <- y$p.value
+                        cell_count_mus <- round(y$expected[1,1], 2)
+                }
+        }
+        else {
+                chisq_mus <- NA
+                newp_mus  <- NA
+                cell_count_mus <- "< 1"
+        }
+        
+        return(c(chisq_mus=chisq_mus, newp_mus=newp_mus, cell_count_mus=cell_count_mus))
+})
+chi_mus <- as.data.frame(chi_mus)
+Chi_Squared_Stat_mus <- chi_mus["chisq_mus.X-squared",]  %>% unfactor %>% t %>% as.data.frame
+Chi_Squared_p_value_mus <- chi_mus["newp_mus.X-squared",] %>% unfactor %>% t %>% as.data.frame
+```
+
+## Fisher's Enrichment Test
+
+```{r}
+# Fisher test
+fisher_mus <- lapply(Mus_t, function(x) fisher.test(x[1:2,1:2]))
+
+# Extract fisher OR's
+Fisher_Odds_Ratio_mus <- do.call(rbind.data.frame, lapply(fisher_mus, function(x) x$estimate))
+
+# Extract fisher p-values
+Fisher_p_value_mus  <- do.call(rbind.data.frame, lapply(fisher_mus, function(x) x$p.value))
+
+# 95% CI
+Fisher_lower_mus  <- do.call(rbind.data.frame, lapply(fisher_mus, function(x) x$conf.int[1]))
+Fisher_upper_mus  <- do.call(rbind.data.frame, lapply(fisher_mus, function(x) x$conf.int[2]))
+```
+
+
+## PRR
+```{r}
+# PRR matrix, containing PRR values, lower bounds and upper bounds
+PRR_mus <- as.data.frame(sapply(Mus_t, function(x) {
+                                PRR <- (x[1,1]/x[1,3])/(x[2,1]/x[2,3])
+                                s <- sqrt(1/x[1,1] + 1/x[2,1] - 
+                                          1/(x[1,1]+x[1,2])   - 
+                                          1/(x[2,1]+x[2,2]))
+                                prr.low <- PRR/exp(1.96*s)
+                                prr.up  <- PRR*exp(1.96*s)
+                
+                                PRR <- rbind(PRR, s, prr.low, prr.up)
+}))
+
+# extract PRR values
+prr_mus <- t(PRR_mus[1,])
+```
+
+
+## Statistical Tests for each chemical by spontaneous abortion in Mouse
+```{r echo=FALSE, message=FALSE}
+Table_mus <- cbind.data.frame(Chi_Squared_Stat_mus, Chi_Squared_p_value_mus, 
+                              Fisher_Odds_Ratio_mus, Fisher_p_value_mus, prr_mus) %>% na.omit
+
+colnames(Table_mus) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                       "Fisher_Odds_Ratio", "Fisher_p_value", "PRR")
+
+Table_mus$Chi_Squared_p_value <-p.adjust(Table_mus$Chi_Squared_p_value, method="bonferroni")
+Table_mus$Fisher_p_value <-p.adjust(Table_mus$Fisher_p_value, method="bonferroni")
+
+sum_mus <- cbind.data.frame(Chi_Squared_Stat_mus, Chi_Squared_p_value_mus, 
+                              Fisher_Odds_Ratio_mus, Fisher_p_value_mus, prr_mus) 
+sum_mus[which(rownames(sum_mus) %in% rownames(Table_mus)),] = Table_mus
+sum_mus <- cbind.data.frame(sum_mus[,-5], Fisher_lower_mus, Fisher_upper_mus, t(PRR_mus))
+sum_mus[apply(is.na(sum_mus), 1, any),] <- NA
+
+colnames(sum_mus) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                       "Fisher_Odds_Ratio", "Fisher_p_value", 
+                       "Fisher_CI_lower", "Fisher_CI_upper", 
+                       "PRR", "sqrt", "PRR_CI_lower", "PRR_CI_upper")
+
+for (i in 1:nrow(Table_mus)) {
+        for (j in 1:ncol(Table_mus)) {
+               if ( Table_mus[i,j]< 0.0005/nrow(Table_mus)) Table_mus[i,j] <- "< 0.000"
+               else Table_mus[i,j] <- round(as.numeric(Table_mus[i,j]), 4) 
+        }
+}
+
+kable(Table_mus,
+      caption=paste("Statistical Tests for each chemical by 
+                     Spontaneous Abortion in humans 
+                     ( CUT-OFF =", round(0.05/nrow(Table_mus), 4),
+                    ")")) %>% 
+      kable_styling(full_width = F)
+```
+
+## Cross Validation
+```{r echo=FALSE,results='hide',fig.keep='all',message=FALSE}
+cv_int  <- list(); cv_gene <- list(); cv_rac  <- list()
+chisq_test <- array(); fisher_test <- array()
+
+cross_val_mus <- sapply(cut_offs, function(N0_) {
+        
+        for (i in 1:1000) {
+                
+                # random sample
+                cv_int[[i]]  <- sample.int(N, N0_)              
+                cv_gene[[i]] <- Genes$Mus[cv_int[[i]],]      
+                # find interactions between random sample and Disease-Gene list of Mouse
+                cv_rac[[i]]  <- cv_gene[[i]][which(toupper(cv_gene[[i]]$Symbol) %in% D_G$Mus$GeneSymbol),] 
+        
+                a = nrow(cv_rac[[i]])
+                b = N0_ - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - N0_; 
+                N_1 = N - N_0;
+        
+                Table <- matrix(c(a,b,N0_,c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                Table <- as.data.frame.matrix(Table)
+                
+                if (N0_ <= 1000) {
+                        chisq_res <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test[i] <- chisq_res$p.value
+                } else {
+                        chisq_res <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test[i] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test[i] <- fisher_res$p.value
+                
+        }
+
+        hist(chisq_test, las=1, col="dodgerblue", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Chi-squared p-values for association",
+             main=as.character(paste0("Chisq, Sample Size = ", N0_)))
+        
+         hist(fisher_test, las=1, col="darkorange", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Fisher's test p-values for association",
+             main=as.character(paste0("Fisher, Sample Size = ", N0_)))
+})
+```
+
+### Summary plot of cross validation
+```{r fig.width=8, fig.height=6, fig.align='center',out.extra='angle=90', echo=TRUE, message=FALSE}
+chisq_test_mus = fisher_test_mus <- data.frame(matrix(NA, nrow=1000, ncol=length(cut_offs)))
+colnames(chisq_test_mus) = colnames(fisher_test_mus) <- paste("sample size =", cut_offs)
+
+for(k in 1:length(cut_offs)) {
+    for (i in 1:1000) {
+                
+                # random sample
+                cv_int  <- sample.int(N, cut_offs[k])              
+                cv_gene <- Genes$Mus[cv_int,]      
+                # find interactions between random sample and Disease-Gene list of Mouse
+                cv_rac  <- cv_gene[which(toupper(cv_gene$Symbol) %in% D_G$Mus$GeneSymbol),] 
+                
+                a = nrow(cv_rac)
+                b = cut_offs[k] - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - cut_offs[k]; 
+                N_1 = N - N_0;
+                
+                Table <- matrix(c(a,b,cut_offs[k],c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                Table <- as.data.frame.matrix(Table)
+                
+                if (cut_offs[k] <= 1000) {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test_mus[i,k] <- chisq_res$p.value
+                } else {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test_mus[i,k] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test_mus[i,k] <- fisher_res$p.value
+                
+    }
+}
+
+plot(density(chisq_test_mus[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Chi-squared p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6){ lines(density(chisq_test_mus[,i]), lwd=1, col = cl[i], type = 'b') }
+abline(v = 0.05/nrow(Table_mus), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_mus), 3)), col="black") 
+legend("topleft", legend = colnames(chisq_test_mus), fill=cl[1:6], cex=0.75)
+
+plot(density(fisher_test_mus[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Fisher Exact Test p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6) {lines(density(fisher_test_mus[,i]), lwd=1, col = cl[i], type = 'b')}
+abline(v = 0.05/nrow(Table_mus), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_mus), 3)), col="black") 
+legend("topleft", legend = colnames(fisher_test_mus), fill=cl[1:6], cex=0.75)
+```   
+
+## Mouse Heat Map
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10,fig.align="center"}
+# take union of the variables
+m = D_G$Mus$GeneSymbol
+b <- sapply(names(C_G), function(x) ifelse(m %in% C_G[[x]][C_G[[x]]$Organism == "Mus musculus",]$GeneSymbol, "YES", "NO"))
+b = dg_count_mus<- cbind.data.frame('Gene'=m, b, stringsAsFactors=F)
+for (i in 1:nrow(dg_count_mus)) dg_count_mus$count[i] <- sum(dg_count_mus[i,]=="YES")
+# reshape into long-form to use in ggplot later
+longtable <- melt(b, 
+                  id.var="Gene",
+                  measure.vars = colnames(b[,-1]))
+colnames(longtable)[2]="Chemicals"
+# arrange the order for the final graph
+longtable2 <- transform(longtable, Gene= factor(Gene, levels = rev(m)))
+
+cols <- c("gray80", "firebrick3")
+ggplot(longtable2, 
+       aes(Chemicals, Gene, fill = factor(value) )) + 
+       scale_fill_manual(values = cols) + 
+       geom_tile(color = "white") +
+       labs(fill="Overlap")+
+       theme(axis.text.y = element_text(angle = 55, hjust = 1, vjust = 1, size = 3),
+             axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9))
+```
+
+### Important genes in Mouse
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height = 5, fig.width = 8,fig.align="center"}
+dg_count_mus <- dg_count_mus[,c("Gene", "count")] %>% .[.[,2]!=0,]
+ggplot(dg_count_mus, aes(x=Gene, y=count))+ ylim(0,8) +
+        geom_bar(stat="identity", color="darkblue", fill="lightblue")+
+        labs(title="Important Genes in Mouse", y = "count")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=5))
+```
+
+# 2x2 Tables (Rat)
+
+Total No. Genes
+```{r}
+N <- nrow(Genes$Rat); N
+```
+
+Number in tables
+```{r nograpes3, results="asis"}
+
+# Get all related rat genes for each chemical
+CGR <- lapply(C_G, function(x) x[x$Organism == "Rattus norvegicus", 5:6][!duplicated(
+                               x[x$Organism == "Rattus norvegicus", 5:6]$GeneId),]) 
+
+# No. of Genes associated with both Chemicals and S.A.
+a <- sapply(CGR, function(x) sum(x$GeneSymbol %in% D_G$Rat$GeneSymbol)); a<-as.matrix(a, ncol=1)
+
+# Unique No. of huamn genes for each chemical
+N0_ <- uniq.rat
+
+# No. of Rat genes associated w/ S.A.
+N_0 <- nrow(D_G$Rat)
+
+b = N0_ - a;
+c = N_0 - a;
+d = N-a-b-c;
+N1_ = N - N0_; 
+N_1 = N - N_0;
+
+Rat_t <- list()
+for (i in 1:length(C_G)) {
+        
+        Rat_t[[i]] <- matrix(c(a[i], b[i], N0_[i], 
+                               c[i], d[i], N1_[i], 
+                               N_0,  N_1,  N), ncol=3, byrow=T)
+        
+        colnames(Rat_t[[i]]) <- c("Yes","No","Total")
+        rownames(Rat_t[[i]]) <- c("Yes","No","Total")
+        
+        Rat_t[[i]] <- as.data.frame(Rat_t[[i]])
+}
+names(Rat_t) <- names(C_G)
+
+lapply(names(Rat_t), function(x) {
+                   kable(Rat_t[[x]],
+                   caption = paste0(x, "-Gene-S.A.")) %>%  
+                   kable_styling(full_width = F)})
+
+```
+
+Venn Plots
+```{r fig.width=4, fig.height=4, fig.align='center',out.extra='angle=90', echo=FALSE}
+
+for (i in seq_along(Rat_t)) {
+        
+        grid.newpage()
+        draw.pairwise.venn(area1=Rat_t[[i]][1,3], area2=Rat_t[[i]][3,1],
+                           cross.area=Rat_t[[i]][1,1], alpha=rep(.5,2),
+                           ext.text=F,cex=c(1.8,1.4,1.8),cat.cex=rep(1.3,2),
+                           cat.pos = rep( ifelse( abs(Rat_t[[i]][1,3]-
+                                                  Rat_t[[i]][3,1]) <
+                                                  500, 165, 330), 2), 
+                           cat.dist=rep(0.025,2),rotation.degree = 50,
+                           cat.col = c("dodgerblue3","firebrick4"),
+                           category=c(names(Rat_t)[i], "Spontaneous abortion"),
+                           lty=rep("blank",2), fill=c("light blue", "pink"), 
+                           label.col=c("dodgerblue3", "black", "firebrick4"))
+}
+
+```
+
+# Tests and Results (Rat)
+
+## Chi-Squared Test
+
+```{r warning=FALSE}
+# see whether chi-squared distribution can be satisfied for each chemical
+try_chisq <- try(lapply(Rat_t, function(x) chisq.test(x[1:2,1:2], correct=F)))
+
+chi_rat <- sapply(try_chisq, function(y) {
+        
+        # when there're low expected cell count, using 'N-1' chi-square
+        if (y$expected[1,1]>=1 & y$expected[1,2]>=1 & y$expected[2,1]>=1 & y$expected[2,2]>=1) {
+                if (y$expected[1,1]<5|y$expected[1,2]<5|y$expected[2,1]<5|y$expected[2,2]<5) {
+                        chisq <- (y$statistic)*N/(N-1)
+                        newp  <- pchisq(chisq, df=1, lower.tail=F)
+                        cell_count <- "< 5"
+                }
+                else  {
+                        chisq <- y$statistic
+                        newp  <- y$p.value
+                        cell_count <- round(y$expected[1,1], 2)
+                }
+        }
+        else {
+                chisq <- NA
+                newp  <- NA
+                cell_count <- "< 1"
+        }
+        
+        return(c(chisq_rat=chisq, newp_rat=newp, cell_count_rat=cell_count))
+})
+chi_rat <- as.data.frame(chi_rat)
+Chi_Squared_Stat_rat <- chi_rat["chisq_rat.X-squared",]  %>% unfactor %>% t %>% as.data.frame
+Chi_Squared_p_value_rat <- chi_rat["newp_rat.X-squared",] %>% unfactor %>% t %>% as.data.frame
+```
+
+## Fisher's Enrichment Test
+
+```{r}
+# Fisher test
+fisher_rat <- lapply(Rat_t, function(x) fisher.test(x[1:2,1:2]))
+
+# Extract fisher OR's
+Fisher_Odds_Ratio_rat <- do.call(rbind.data.frame, lapply(fisher_rat, function(x) x$estimate))
+
+# Extract fisher p-values
+Fisher_p_value_rat  <- do.call(rbind.data.frame, lapply(fisher_rat, function(x) x$p.value))
+
+# Extract fisher CI
+Fisher_lower_rat <- do.call(rbind.data.frame, lapply(fisher_rat, function(x) x$conf.int[1]))
+Fisher_upper_rat <- do.call(rbind.data.frame, lapply(fisher_rat, function(x) x$conf.int[2]))
+```
+
+
+## PRR
+```{r}
+# PRR matrix, containing PRR values, lower bounds and upper bounds
+PRR_rat <- as.data.frame(sapply(Rat_t, function(x) {
+                                PRR <- (x[1,1]/x[1,3])/(x[2,1]/x[2,3])
+                                s <- sqrt(1/x[1,1] + 1/x[2,1] - 
+                                          1/(x[1,1]+x[1,2])   - 
+                                          1/(x[2,1]+x[2,2]))
+                                prr.low <- PRR/exp(1.96*s)
+                                prr.up  <- PRR*exp(1.96*s)
+                
+                                PRR <- rbind(PRR, s, prr.low, prr.up)
+}))
+
+# extract PRR values
+prr_rat <- t(PRR_rat[1,])
+```
+
+## Statistical Tests for each chemical by spontaneous abortion in Rat
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height = 4, fig.width = 6,fig.align="center"}
+Table_rat <- cbind.data.frame(Chi_Squared_Stat_rat, Chi_Squared_p_value_rat, 
+                              Fisher_Odds_Ratio_rat, Fisher_p_value_rat, prr_rat) %>% na.omit
+
+colnames(Table_rat) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                         "Fisher_Odds_Ratio", "Fisher_p_value", "PRR")
+
+Table_rat$Chi_Squared_p_value <-p.adjust(Table_rat$Chi_Squared_p_value, method="bonferroni")
+Table_rat$Fisher_p_value <-p.adjust(Table_rat$Fisher_p_value, method="bonferroni")
+
+sum_rat <- cbind.data.frame(Chi_Squared_Stat_rat,  Chi_Squared_p_value_rat, 
+                            Fisher_Odds_Ratio_rat, Fisher_p_value_rat, prr_rat) 
+sum_rat[which(rownames(sum_rat) %in% rownames(Table_rat)), ] = Table_rat
+sum_rat <- cbind.data.frame(sum_rat[,-5], Fisher_lower_rat, Fisher_upper_rat, t(PRR_rat))
+sum_rat[apply(is.na(sum_rat), 1, any),] <- NA
+
+colnames(sum_rat) <- c("Chi_Squared_Stat", "Chi_Squared_p_value", 
+                       "Fisher_Odds_Ratio", "Fisher_p_value", 
+                       "Fisher_CI_lower", "Fisher_CI_upper", 
+                       "PRR", "sqrt", "PRR_CI_lower", "PRR_CI_upper")
+
+for (i in 1:nrow(Table_rat)) {
+        for (j in 1:ncol(Table_rat)) {
+               if (Table_rat[i,j]< 0.0005/nrow(Table_rat)) Table_rat[i,j] <- "< 0.000"
+               else Table_rat[i,j] <- round(as.numeric(Table_rat[i,j]), 4) 
+        }
+}
+
+kable(Table_rat,
+      caption=paste("Statistical Tests for each chemical by 
+                     Spontaneous Abortion in rat 
+                     ( CUT-OFF =", round(0.05/nrow(Table_rat), 4),
+                    ")")) %>% 
+      kable_styling(full_width = F)
+```
+
+## Cross Validation
+```{r echo=FALSE,results='hide',fig.keep='all',message=FALSE}
+cv_int  <- list(); cv_gene <- list(); cv_rac  <- list()
+chisq_test <- array(); fisher_test <- array()
+
+lapply(cut_offs, function(N0_) {
+        
+        for (i in 1:1000) {
+                
+                # random sample
+                cv_int[[i]]  <- sample.int(N, N0_)              
+                cv_gene[[i]] <- Genes$Rat[cv_int[[i]],]      
+                # find interactions between random sample and Disease-Gene list of rat
+                cv_rac[[i]]  <- cv_gene[[i]][which(toupper(cv_gene[[i]]$Symbol) %in% D_G$Rat$GeneSymbol),] 
+        
+                a = nrow(cv_rac[[i]])
+                b = N0_ - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - N0_; 
+                N_1 = N - N_0;
+        
+                Table <- matrix(c(a,b,N0_,c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                colnames(Table) <- c("Yes","No","Total"); 
+                rownames(Table) <- c("Yes","No","Total")
+                Table <- as.data.frame.matrix(Table)
+                
+                if (N0_ <= 1000) {
+                        chisq_res <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test[i] <- chisq_res$p.value
+                } else {
+                        chisq_res <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test[i] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test[i] <- fisher_res$p.value
+                
+        }
+
+        hist(chisq_test, las=1, col="dodgerblue", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Chi-squared p-values for association",
+             main=as.character(paste0("Chisq, Sample Size = ", N0_)))
+        
+         hist(fisher_test, las=1, col="darkorange", breaks=20,
+             xlim=c(0,1), ylim=c(0,600),
+             xlab="Fisher's test p-values for association",
+             main=as.character(paste0("Fisher, Sample Size = ", N0_)))
+})
+```
+
+### Summary plot of cross validation
+```{r fig.width=8, fig.height=6, fig.align='center',out.extra='angle=90', echo=FALSE}
+chisq_test_rat = fisher_test_rat <- data.frame(matrix(NA, nrow=1000, ncol=length(cut_offs)))
+colnames(chisq_test_rat) = colnames(fisher_test_rat) <- paste("sample size =", cut_offs)
+
+for(k in 1:length(cut_offs)) {
+    for (i in 1:1000) {
+                
+                # random sample
+                cv_int  <- sample.int(N, cut_offs[k])              
+                cv_gene <- Genes$Rat[cv_int,]      
+                # find interactions between random sample and Disease-Gene list of Mouse
+                cv_rac  <- cv_gene[which(toupper(cv_gene$Symbol) %in% D_G$Rat$GeneSymbol),] 
+                
+                a = nrow(cv_rac)
+                b = cut_offs[k] - a;
+                c = N_0 - a;
+                d = N-a-b-c;
+                N1_ = N - cut_offs[k]; 
+                N_1 = N - N_0;
+                
+                Table <- matrix(c(a,b,cut_offs[k],c,d,N1_,N_0,N_1,N), ncol=3, byrow=T)
+                Table <- as.data.frame.matrix(Table)
+                
+                if (cut_offs[k] <= 1000) {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], simulate.p.value=T)
+                        chisq_test_rat[i,k] <- chisq_res$p.value
+                } else {
+                        chisq_res  <- chisq.test(Table[1:2,1:2], correct=F)
+                        chisq_test_rat[i,k] <- chisq_res$p.value       
+                }
+                
+                
+                fisher_res <- fisher.test(Table[1:2,1:2])
+                fisher_test_rat[i,k] <- fisher_res$p.value
+                
+    }
+}
+
+
+plot(density(chisq_test_rat[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Chi-squared p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6){ lines(density(chisq_test_rat[,i]), lwd=1, col = cl[i], type = 'b') }
+abline(v = 0.05/nrow(Table_rat), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_rat), 3)), col="black") 
+legend("topleft", legend = colnames(chisq_test_rat), fill=cl[1:6], cex=0.75)
+
+plot(density(fisher_test_rat[,1]), lwd=1, col=cl[1], type = 'b',
+     xlab="p-value for association", 
+     ylab="Density", main="Fisher Exact Test p-values density plot",
+     ylim=c(0,3), xlim=c(0,1), las=1, cex.lab=1, cex.main=1.5)
+for (i in 2:6) {lines(density(fisher_test_rat[,i]), lwd=1, col = cl[i], type = 'b')}
+abline(v = 0.05/nrow(Table_rat), col="black", lwd=1, lty=2)
+text(x=0.05, y=1.5,labels=paste0("cutoff=", round(0.05/nrow(Table_rat), 3)), col="black") 
+legend("topleft", legend = colnames(fisher_test_rat), fill=cl[1:6], cex=0.75)
+```  
+
+
+## Rat Heat map
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10, fig.align="center"}
+# take union of the variables
+m = D_G$Rat$GeneSymbol
+b <- sapply(names(C_G), function(x) ifelse(m %in% C_G[[x]][C_G[[x]]$Organism == "Rattus norvegicus",]$GeneSymbol, "YES", "NO"))
+b = dg_count_rat<- cbind.data.frame('Gene'=m, b, stringsAsFactors=F)
+for (i in 1:nrow(dg_count_rat)) dg_count_rat$count[i] <- sum(dg_count_rat[i,]=="YES")
+# reshape into long-form to use in ggplot later
+longtable <- melt(b, 
+                  id.var="Gene",
+                  measure.vars = colnames(b[,-1]))
+colnames(longtable)[2]="Chemicals"
+# arrange the order for the final graph
+longtable2 <- transform(longtable, Gene= factor(Gene, levels = rev(m)))
+
+cols <- c("gray80", "firebrick3")
+ggplot(longtable2, 
+       aes(Chemicals, Gene, fill = factor(value) )) + 
+       scale_fill_manual(values = cols) + 
+       geom_tile(color = "white") +
+       labs(fill="Overlap")+
+       theme(axis.text.y = element_text(angle = 55, hjust = 1, vjust = 1, size = 3),
+             axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 9))
+```
+
+### Important genes in Rat
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=5, fig.width=8,fig.align="center"}
+dg_count_rat <- dg_count_rat[,c("Gene", "count")] %>% .[.[,2]!=0,]
+ggplot(dg_count_rat, aes(x=Gene, y=count))+ ylim(0,8) +
+        geom_bar(stat="identity", color="darkblue", fill="lightblue")+
+        labs(title="Important Genes in Rat", y = "count")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=7.5))
+```
+
+# Test Statistics Decision
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+count_info <- rbind(chi_hum["cell_count_hum",],
+                    chi_mus["cell_count_mus",],
+                    chi_rat["cell_count_rat",]) %>% t %>% as.data.frame
+
+
+count_info%>%
+        mutate(
+                Chemicals = row.names(.),
+                
+                Human = cell_spec(cell_count_hum, color = ifelse(cell_count_hum=="< 1", "red", 
+                                                          ifelse(cell_count_hum=="< 5", "blue","black"))),
+                Mouse = cell_spec(cell_count_mus, color = ifelse(cell_count_mus=="< 1", "red", 
+                                                          ifelse(cell_count_mus=="< 5", "blue","black"))),
+                Rat   = cell_spec(cell_count_rat, color = ifelse(cell_count_rat=="< 1", "red", 
+                                                          ifelse(cell_count_rat=="< 5", "blue","black")))
+        ) %>% 
+        .[,-c(1:3)] %>%
+        kable(escape = F, row.names=T) %>%
+        kable_styling("striped", full_width = F)%>%
+        group_rows("Metal", 1, 4) %>%
+        group_rows("Phthalate", 5, 7)%>%
+        group_rows("VOC (volatile organic carbon)", 8,12)%>%
+        group_rows("Phenol", 13, 14)%>%
+        group_rows("Pesticide", 15, 20)%>%
+        group_rows("PAH (polycyclic aromatic hydrocarbon)",21,23)%>%
+        group_rows("PCP (personal care product)", 24,24) 
+```
+
+
+# Summary Plots
+
+## Chi Squared Statistics plot
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=5, fig.width=8,fig.align="center"}
+dat_chisq <- data.frame(Chem=rep(names(C_G),3))
+
+dat_chisq$X_squared =  c(sum_hum$Chi_Squared_Stat, 
+                         sum_mus$Chi_Squared_Stat, 
+                         sum_rat$Chi_Squared_Stat)
+
+dat_chisq$Organism = as.factor(c(rep("Human",length(C_G)),
+                                 rep("Mouse",length(C_G)),
+                                 rep("Rat",length(C_G))))
+
+colnames(dat_chisq) <- c("Chem", "X_squared", "Organism")
+
+# plot
+ggplot(data = dat_chisq, aes(x = Chem, y = X_squared, colour = Organism)) +
+        labs(title="X-squared test",
+             x ="Chemicals", y = "X-squared values") + 
+        geom_point(aes(shape = Organism), size=4,
+                   position = position_dodge(width = 0.2)) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size=8))
+```
+
+## Fisher Exact Test Statistics plot
+### Fisher Exact Test Statistics plot-1
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=6, fig.width=8,fig.align="center"}
+set1 <- rownames(sum_hum[which(is.na(sum_hum$Fisher_Odds_Ratio) == FALSE),])
+set2 <- rownames(sum_mus[which(is.na(sum_mus$Fisher_Odds_Ratio) == FALSE),])
+set3 <- rownames(sum_rat[which(is.na(sum_rat$Fisher_Odds_Ratio) == FALSE),])
+
+set4=union(set1, set2)
+dat_chem = union(set4, set3)
+dat_chem1 <- rownames(sum_hum[which(rownames(sum_hum) %in% dat_chem),])
+
+dat <- data.frame(Chem=rep(dat_chem1,3))
+# fix the order of variables
+dat$Chem <- factor(dat$Chem, levels=unique(dat$Chem))
+dat$fisher.est =  c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_Odds_Ratio,
+                    sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_Odds_Ratio,
+                    sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_Odds_Ratio)
+
+dat$fisher.low =  c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_CI_lower,
+                    sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_CI_lower,
+                    sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_CI_lower)
+
+dat$fisher.up = c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_CI_upper,
+                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_CI_upper,
+                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_CI_upper)
+
+dat$Organism = as.factor(c(rep("Human",length(dat_chem)),
+                           rep("Mouse",length(dat_chem)),
+                           rep("Rat",length(dat_chem))))
+
+colnames(dat) <- c("Chem", "fisher.est", "fisher.low", "fisher.up", "Organism")
+
+# plot
+ggplot(data=dat, aes(x=Chem, y=fisher.est, ymin=fisher.low, ymax=fisher.up, colour=Organism)) +
+        labs(title="Fisher exact test: Estimated enrichment and 95% CI",
+             x ="Chemicals", y = "Enrichment Values") + 
+        geom_point(aes(shape = Organism), size=4, position = position_dodge(width = 0.5)) +
+        geom_errorbar(position = position_dodge(width = 0.5), width=1) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size=8))
+```
+
+### Fisher Exact Test Statistics plot-2
+```{r echo=TRUE,message=FALSE,warning=FALSE,fig.keep='all',fig.height=6, fig.width=8,fig.align="center"}
+
+forestplot(dat_chem1, 
+           legend = c("Human", "Mouse", "Rat"),
+           boxsize = .3, 
+           line.margin = .1, 
+           mean=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_Odds_Ratio,
+                                 sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_Odds_Ratio,
+                                 sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_Odds_Ratio),
+           lower=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_CI_lower,
+                                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_CI_lower,
+                                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_CI_lower),
+           upper=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_CI_upper,
+                                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_CI_upper,
+                                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_CI_upper),
+           clip=c(-1, 20),
+           col=fpColors(box=c("firebrick2", "seagreen3", "dodgerblue1")),
+           grid = structure(c(-.1, -.05, .05), 
+                            gp = gpar(lty = 2, col = "#CCCCFF")), 
+           
+           zero = 1,
+           xlab="Statistical Value of Fisher's Enrichment Test with 95% Confidence Interval")
+```
+
+## PRR plot
+### PRR plot-1
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=6, fig.width=8,fig.align="center"}
+dat_prr <- data.frame(Chem=rep(dat_chem1,3))
+dat_prr$Chem <- factor(dat_prr$Chem, levels=unique(dat_prr$Chem))
+dat_prr$prr = c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR,
+                sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR,
+                sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR)
+
+dat_prr$prr.low =  c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR_CI_lower,
+                     sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR_CI_lower,
+                     sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR_CI_lower)
+
+dat_prr$prr.up =  c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR_CI_upper,
+                    sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR_CI_upper,
+                    sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR_CI_upper)
+
+dat_prr$Organism = as.factor(c(rep("Human",length(dat_chem)),
+                               rep("Mouse",length(dat_chem)),
+                               rep("Rat",length(dat_chem))))
+
+colnames(dat_prr) <- c("Chem", "PRR", "prr.low", "prr.up", "Organism")
+
+# plot
+ggplot(data=dat_prr,aes(x=Chem, y=PRR, ymin=prr.low, ymax=prr.up, colour=Organism)) +
+        geom_point(aes(shape=Organism), size=4, position=position_dodge(width = 0.5)) +
+        geom_errorbar(position = position_dodge(width = 0.5), width = 0.4) +
+        labs(title="PRR and 95% CI", x ="Chemicals", y = "PRR Values")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=10))
+```
+
+### PRR plot-2
+```{r echo=TRUE,message=FALSE,warning=FALSE,fig.keep='all',fig.height=6, fig.width=8,fig.align="center"}
+forestplot(dat_chem1, 
+           legend = c("Homo sapiens", "Mus musculus", "Rattus norvegicus"),
+           boxsize = .25, 
+           line.margin = .1, 
+           lwd.xaxis=1.5,
+           lwd.ci=1.5,
+           mean=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR,
+                                 sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR,
+                                 sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR),
+           lower=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR_CI_lower,
+                                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR_CI_lower,
+                                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR_CI_lower),
+           upper=cbind.data.frame(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$PRR_CI_upper,
+                                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$PRR_CI_upper,
+                                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$PRR_CI_upper),
+           clip =c(-1, 17),
+           col=fpColors(box=c("black","grey48","grey71"),
+                        lines=c("black","grey48","grey71")),
+           fn.ci_norm=c("fpDrawCircleCI",  "fpDrawNormalCI","fpDrawDiamondCI"), 
+                            
+           txt_gp = fpTxtGp(label = gpar(fontfamily="serif",fontface=0.9),
+                            legend =gpar(fontfamily="serif",cex=0.9),
+                            ticks = gpar(fontfamily="serif",cex=0.9),
+                            xlab  = gpar(fontfamily="serif",cex=1)),
+           zero = 1,
+           xlab = "Prevalence Rate Ratio (PRR) with 95% Confidence Interval"
+           )
+```
+
+## Chi Squared p-values plot
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=6, fig.width=8,fig.align="center"}
+set1 <- rownames(sum_hum[which(is.na(sum_hum$Chi_Squared_p_value) == FALSE),])
+set2 <- rownames(sum_mus[which(is.na(sum_mus$Chi_Squared_p_value) == FALSE),])
+set3 <- rownames(sum_rat[which(is.na(sum_rat$Chi_Squared_p_value) == FALSE),])
+
+set4=union(set1, set2)
+dat_chi_pvalue = union(set4, set3)
+
+dat_p_1 <- data.frame(Chem=rep(dat_chi_pvalue,3))
+# fix the order of chemicals
+dat_p_1$Chem <- factor(dat_p_1$Chem, levels=unique(dat_p_1$Chem))
+dat_p_1$p_val =  c(sum_hum[which(rownames(sum_hum) %in% dat_chi_pvalue),]$Chi_Squared_p_value,
+                   sum_mus[which(rownames(sum_mus) %in% dat_chi_pvalue),]$Chi_Squared_p_value,
+                   sum_rat[which(rownames(sum_rat) %in% dat_chi_pvalue),]$Chi_Squared_p_value)
+
+dat_p_1$p_val <- -log10(dat_p_1$p_val)
+
+dat_p_1$Organism = as.factor(c(rep("Human",length(dat_chi_pvalue)),
+                               rep("Mouse",length(dat_chi_pvalue)),
+                               rep("Rat",length(dat_chi_pvalue))))
+p<-
+ggplot(dat_p_1, aes(x=Chem, y=p_val, group=Organism)) +
+        geom_point(aes(color=Organism, shape=Organism), size=4) +
+        labs(title="X-Squared p-values", x ="Chemicals", y = "-log10(p-value)")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=8)) +
+        geom_hline(yintercept=-log10(0.05/nrow(Table_hum)), linetype="dashed", color=1)+
+        geom_hline(yintercept=-log10(0.05/nrow(Table_mus)), linetype="dashed", color=2)+
+        geom_hline(yintercept=-log10(0.05/nrow(Table_rat)), linetype="dashed", color=3)
+
+ggdraw(add_sub(p, paste0("Human Cutoff=", round(-log10(0.05/nrow(Table_hum)),3),
+                       "\nMouse Cutoff=", round(-log10(0.05/nrow(Table_hum)),3),
+                       "\nRat Cutoff=",   round(-log10(0.05/nrow(Table_rat)),3))
+))
+```
+
+## Fisher Exact Test p-values plot
+```{r echo=TRUE, message=FALSE, warning=FALSE, fig.height=6, fig.width=8,fig.align="center"}
+set1 <- rownames(sum_hum[which(is.na(sum_hum$Fisher_p_value) == FALSE),])
+set2 <- rownames(sum_mus[which(is.na(sum_mus$Fisher_p_value) == FALSE),])
+set3 <- rownames(sum_rat[which(is.na(sum_rat$Fisher_p_value) == FALSE),])
+
+set4=union(set1, set2)
+dat_chi_pvalue = union(set4, set3)
+
+dat_p_2 <- data.frame(Chem=rep(dat_chi_pvalue,3))
+# fix the order of chemicals
+dat_p_2$Chem <- factor(dat_p_2$Chem, levels=unique(dat_p_2$Chem))
+dat_p_2$p_val = c(sum_hum[which(rownames(sum_hum) %in% dat_chem),]$Fisher_p_value,
+                  sum_mus[which(rownames(sum_mus) %in% dat_chem),]$Fisher_p_value,
+                  sum_rat[which(rownames(sum_rat) %in% dat_chem),]$Fisher_p_value)
+dat_p_2$p_val <- -log10(dat_p_2$p_val)
+dat_p_2$Organism = as.factor(c(rep("Human",length(dat_chi_pvalue)),
+                               rep("Mouse",length(dat_chi_pvalue)),
+                               rep("Rat",length(dat_chi_pvalue))))
+g<-
+ggplot(dat_p_2, aes(x=Chem, y=p_val, group=Organism)) +
+        geom_point(aes(color=Organism, shape=Organism), size=4) +
+        labs(title="Fisher Exact test p-values", x ="Chemicals", y = "log10(p-value)")+
+        theme(axis.text.x = element_text(angle=45, hjust=1, vjust=1, size=8)) +
+        geom_hline(yintercept=-log10(0.05/nrow(Table_hum)), linetype="dashed", color=1)+
+        geom_hline(yintercept=-log10(0.05/nrow(Table_mus)), linetype="dashed", color=2)+
+        geom_hline(yintercept=-log10(0.05/nrow(Table_rat)), linetype="dashed", color=3)
+
+ggdraw(add_sub(g, paste0("Human Cutoff=", round(-log10(0.05/nrow(Table_hum)),3),
+                       "\nMouse Cutoff=", round(-log10(0.05/nrow(Table_hum)),3),
+                       "\nRat Cutoff=",   round(-log10(0.05/nrow(Table_rat)),3))
+))
+```
