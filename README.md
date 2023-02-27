@@ -20,4 +20,4 @@ This is a [workflowr](https://github.com/jdblischak/workflowr) project
 
 Pipeline_with_comment_kmb.Rmd: data cleaning, data analysis, producing plots and tables
 
-*docs* folder contains html file of code and plots output in the code
+*docs* folder contains the relative libraryies and html file of code and plots output in the code
